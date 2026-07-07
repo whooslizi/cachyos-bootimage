@@ -1,10 +1,11 @@
 FROM scratch AS ctx
 
-FROM docker.io/cachyos/cachyos-v3:latest AS base
+ARG BASE_IMAGE=docker.io/cachyos/cachyos-v3:latest
+FROM ${BASE_IMAGE} AS base
 
 FROM base AS builder
 
-RUN pacman -Syu --noconfirm && \
+RUN pacman -Sy --noconfirm && \
     pacman -S --noconfirm \
         git \
         make \
@@ -16,7 +17,12 @@ RUN pacman -Syu --noconfirm && \
 
 WORKDIR /src
 
-RUN git clone https://github.com/bootc-dev/bootc.git .
+ARG BOOTC_VERSION=v1.16.3
+
+RUN git clone \
+    --depth=1 \
+    --branch ${BOOTC_VERSION} \
+    https://github.com/bootc-dev/bootc.git .
 
 RUN make bin install-all DESTDIR=/output
 
@@ -28,18 +34,22 @@ LABEL containers.bootc=1
 LABEL org.opencontainers.image.title="cachyos-bootimage"
 LABEL org.opencontainers.image.description="Immutable CachyOS bootc image"
 LABEL org.opencontainers.image.source="https://github.com/whooslizi/cachyos-bootimage"
+LABEL org.opencontainers.image.licenses="Apache-2.0"
+LABEL org.opencontainers.image.vendor="whooslizi"
+LABEL org.opencontainers.image.documentation="https://github.com/whooslizi/cachyos-bootimage"
 
-RUN pacman -Syu --noconfirm && \
+RUN grep "= */var" /etc/pacman.conf | sed "/= *\/var/s/.*=// ; s/ //" | xargs -n1 sh -c 'mkdir -p "/usr/lib/sysimage/$(dirname $(echo $1 | sed "s@/var/@@"))" && mv -v "$1" "/usr/lib/sysimage/$(echo "$1" | sed "s@/var/@@")"' '' && \
+    sed -i -e "/= *\/var/ s/^#//" -e "s@= */var@= /usr/lib/sysimage@g" -e "/DownloadUser/d" /etc/pacman.conf
+
+RUN pacman -Sy --noconfirm && \
     pacman -S --noconfirm \
         base \
-        bootc \
         linux-cachyos \
-        linux-cachyos-headers \
         linux-firmware \
         dracut \
         ostree \
         docker \
-        docker-compose-plugin \
+        docker-compose \
         openssh \
         networkmanager \
         tailscale \
@@ -50,33 +60,30 @@ RUN pacman -Syu --noconfirm && \
         wget \
         nano \
         vim \
-        jq \
-        rsync \
-        htop \
-        btop \
-        smartmontools \
         btrfs-progs \
         e2fsprogs \
         xfsprogs \
         dosfstools \
-        skopeo \
         ca-certificates && \
     pacman -Scc --noconfirm
 
-RUN systemctl enable \
-    docker.service \
-    sshd.service \
-    NetworkManager.service
+RUN mkdir -p /etc/systemd/system/multi-user.target.wants && \
+    ln -sf /usr/lib/systemd/system/docker.service \
+      /etc/systemd/system/multi-user.target.wants/docker.service && \
+    ln -sf /usr/lib/systemd/system/sshd.service \
+      /etc/systemd/system/multi-user.target.wants/sshd.service && \
+    ln -sf /usr/lib/systemd/system/NetworkManager.service \
+      /etc/systemd/system/multi-user.target.wants/NetworkManager.service
 
-RUN mkdir -p /usr/lib/dracut/dracut.conf.d
+RUN mkdir -p /usr/lib/dracut/dracut.conf.d && \
+    printf "systemdsystemconfdir=/etc/systemd/system\nsystemdsystemunitdir=/usr/lib/systemd/system\n" \
+      > /usr/lib/dracut/dracut.conf.d/30-systemd.conf && \
+    printf "reproducible=yes\nhostonly=no\ncompress=zstd\nadd_dracutmodules+=\" bootc \"\n" \
+      > /usr/lib/dracut/dracut.conf.d/30-bootc.conf
 
-RUN printf 'reproducible=yes\nhostonly=no\ncompress=zstd\nadd_dracutmodules+=" bootc "\n' \
-    > /usr/lib/dracut/dracut.conf.d/bootc.conf
-
-RUN depmod -a $(basename $(ls -d /usr/lib/modules/* | tail -1))
-
-RUN dracut --force \
-    /usr/lib/modules/$(basename $(ls -d /usr/lib/modules/* | tail -1))/initramfs.img
+RUN KVER=$(ls -1 /usr/lib/modules | head -n1) && \
+    depmod -a "${KVER}" && \
+    dracut --force /usr/lib/modules/"${KVER}"/initramfs.img --kver "${KVER}"
 
 RUN rm -rf \
     /boot \
