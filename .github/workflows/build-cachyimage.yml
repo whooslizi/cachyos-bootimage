@@ -5,17 +5,11 @@ on:
     inputs:
       tag:
         description: Image Tag
-        default: latest
         required: true
-
-      push:
-        description: Push to GHCR
-        type: boolean
-        default: true
+        default: latest
 
 jobs:
   build:
-
     runs-on: ubuntu-24.04
 
     permissions:
@@ -23,53 +17,64 @@ jobs:
       packages: write
 
     env:
-      IMAGE: ghcr.io/${{ github.repository_owner }}/cachy-bootc
+      IMAGE: ghcr.io/${{ github.repository }}
 
     steps:
-
       - uses: actions/checkout@v5
 
       - name: Lowercase image name
-        run: |
-          echo "IMAGE=${IMAGE,,}" >> $GITHUB_ENV
+        run: echo "IMAGE=${IMAGE,,}" >> $GITHUB_ENV
 
       - name: Install Buildah
         run: |
-          sudo apt update
-          sudo apt install -y buildah
+          sudo apt-get update
+          sudo apt-get install -y buildah
 
-      - name: Build Image
+      - name: Login GHCR
+        run: |
+          echo "${{ github.token }}" | \
+          buildah login \
+            -u "${{ github.actor }}" \
+            --password-stdin \
+            ghcr.io
+
+      - name: Build
         run: |
           buildah build \
             --format oci \
             --layers \
-            -t $IMAGE:${{ inputs.tag }} \
+            -f Containerfile \
+            -t "$IMAGE:${{ inputs.tag }}" \
             .
 
-      - name: Login GHCR
-        if: inputs.push
-        run: |
-          echo "${{ secrets.GITHUB_TOKEN }}" | \
-          buildah login \
-            -u ${{ github.actor }} \
-            --password-stdin \
-            ghcr.io
-
-      - name: Push latest
-        if: inputs.push
+      - name: Push tag
         run: |
           buildah push \
-            $IMAGE:${{ inputs.tag }}
+            "$IMAGE:${{ inputs.tag }}" \
+            "docker://$IMAGE:${{ inputs.tag }}"
 
-      - name: Tag SHA
-        if: inputs.push
+      - name: Tag latest
+        if: inputs.tag != 'latest'
         run: |
           buildah tag \
-            $IMAGE:${{ inputs.tag }} \
-            $IMAGE:${{ github.sha }}
+            "$IMAGE:${{ inputs.tag }}" \
+            "$IMAGE:latest"
 
-      - name: Push SHA
-        if: inputs.push
+      - name: Push latest
+        if: inputs.tag != 'latest'
         run: |
           buildah push \
-            $IMAGE:${{ github.sha }}
+            "$IMAGE:latest" \
+            "docker://$IMAGE:latest"
+
+      - name: Tag SHA
+        run: |
+          buildah tag \
+            "$IMAGE:${{ inputs.tag }}" \
+            "$IMAGE:${{ github.sha }}"
+
+      - name: Push SHA
+        run: |
+          buildah push \
+            "$IMAGE:${{ github.sha }}" \
+            "docker://$IMAGE:${{ github.sha }}
