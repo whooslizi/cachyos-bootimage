@@ -1,6 +1,6 @@
+ARG BASE_IMAGE=docker.io/cachyos/cachyos-v3:latest
 FROM scratch AS ctx
 
-ARG BASE_IMAGE=docker.io/cachyos/cachyos-v3:latest
 FROM ${BASE_IMAGE} AS base
 
 FROM base AS builder
